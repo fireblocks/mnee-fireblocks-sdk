@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Secrets
+secrets/*
+!secrets/.gitkeep
+
+# Package lock
+package-lock.json
+
+# Test file
+test.ts
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# dotenv environment variables file
+.env
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
