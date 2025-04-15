@@ -15,7 +15,7 @@ Learn more about [RAW Signing](https://developers.fireblocks.com/docs/raw-signin
 ### Option 1: Local Development
 
 ```bash
-git clone https://github.com/yourusername/mnee-bsv.git
+git clone https://github.com/fireblocks/mnee-fireblocks-sdk
 cd mnee-bsv
 npm install
 npm start
@@ -23,7 +23,7 @@ npm start
 
 ### Option 2: Docker Deployment
 ```bash
-git clone https://github.com/yourusername/mnee-bsv.git
+git clone https://github.com/fireblocks/mnee-fireblocks-sdk
 cd mnee-bsv
 mkdir -p secrets
 
