@@ -10,6 +10,8 @@ This SDK provides a streamlined way to manage MNEE token transactions on the Bit
 *NOTE*: This SDK uses Fireblocks RAW signing. Kindly note that running this SDK is on your own responsibility.
 Learn more about [RAW Signing](https://developers.fireblocks.com/docs/raw-signing)
 
+*NOTE*: This project is still WIP which might introduce breaking changes in the future.
+
 ## Installation
 
 ### Option 1: Local Development
