@@ -24,6 +24,7 @@ import {
   formatTokenAmount,
 } from "./utils/token.utils.js";
 import { Logger } from "./utils/logger.js";
+import { AxiosError } from "axios";
 
 /**
  * MNEE Fireblocks SDK
@@ -177,7 +178,34 @@ export class MNEEFireblocksSDK {
 
       // Fetch UTXOs to determine total tokens available
       this.logger.info("Fetching MNEE UTXOs");
-      const utxos = await this.cosignerService.fetchUtxos([senderAddress]);
+      const utxos = [];
+      let page = 1;
+      const limit = 1;
+      const maxPages = 100; // Safety limit to prevent infinite loops
+      
+      // Fetch all pages of UTXOs until we get an empty result
+      while (page <= maxPages) {
+        try {
+          this.logger.debug(`Fetching UTXO page ${page}`);
+          const pageUtxos = await this.cosignerService.fetchUtxos([senderAddress], page, limit);
+          if (pageUtxos.length === 0) {
+            this.logger.debug(`No more UTXOs found at page ${page}, stopping pagination`);
+            break;
+          }
+          utxos.push(...pageUtxos);
+          this.logger.debug(`Added ${pageUtxos.length} UTXOs from page ${page}, total: ${utxos.length}`);
+          page++;
+        } catch (error) {
+          this.logger.error(`Failed to fetch UTXO page ${page}:`, error);
+          throw new Error(`Failed to fetch UTXOs for transaction: ${error.message}`);
+        }
+      }
+      
+      if (page > maxPages) {
+        this.logger.warn(`Reached maximum page limit (${maxPages}) while fetching UTXOs`);
+      }
+      
+      this.logger.info(`Fetched ${utxos.length} total UTXOs across ${page - 1} pages`);
 
       // Calculate total available tokens
       const totalAvailableTokens = utxos.reduce(
@@ -405,6 +433,12 @@ export class MNEEFireblocksSDK {
           rawTxBase64
         );
 
+        // Validate response
+        if (!response || !response.rawtx) {
+          this.logger.error("Invalid response from cosigner - missing rawtx");
+          throw new Error("Invalid response from cosigner: missing transaction data");
+        }
+
         // Parse transaction hash from response
         const hexTransaction = Buffer.from(response.rawtx, "base64").toString(
           "hex"
@@ -479,7 +513,34 @@ export class MNEEFireblocksSDK {
       });
 
       // Fetch UTXOs for all addresses in the vault
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
+      const utxos = [];
+      let page = 1;
+      const limit = 100;
+      const maxPages = 100; // Safety limit to prevent infinite loops
+      
+      // Fetch all pages of UTXOs until we get an empty result
+      while (page <= maxPages) {
+        try {
+          this.logger.debug(`Fetching vault UTXO page ${page} for ${addresses.length} addresses`);
+          const pageUtxos = await this.cosignerService.fetchUtxos(addresses, page, limit);
+          if (pageUtxos.length === 0) {
+            this.logger.debug(`No more UTXOs found at page ${page}, stopping pagination`);
+            break;
+          }
+          utxos.push(...pageUtxos);
+          this.logger.debug(`Added ${pageUtxos.length} UTXOs from page ${page}, total: ${utxos.length}`);
+          page++;
+        } catch (error) {
+          this.logger.error(`Failed to fetch vault UTXO page ${page}:`, error);
+          throw new Error(`Failed to fetch UTXOs for vault ${sourceVaultAccountId}: ${error.message}`);
+        }
+      }
+      
+      if (page > maxPages) {
+        this.logger.warn(`Reached maximum page limit (${maxPages}) while fetching vault UTXOs`);
+      }
+      
+      this.logger.info(`Fetched ${utxos.length} total UTXOs across ${page - 1} pages for vault ${sourceVaultAccountId}`);
 
       // Calculate total available tokens across all addresses
       const totalAvailableTokens = utxos.reduce((sum, utxo) => {
@@ -618,7 +679,7 @@ export class MNEEFireblocksSDK {
         options
       );
     } catch (error) {
-      this.logger.error("Error in transferTokensFromVault:", error);
+      this.logger.error("Error in transferTokensFromVault:", error instanceof AxiosError ? error.message : error);
       throw error;
     }
   }
@@ -638,7 +699,34 @@ export class MNEEFireblocksSDK {
       this.logger.info(`Calculating balance for ${addresses.length} addresses`);
 
       // Fetch UTXOs for the provided addresses
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
+      const utxos = [];
+      let page = 1;
+      const limit = 100;
+      const maxPages = 100; // Safety limit to prevent infinite loops
+      
+      // Fetch all pages of UTXOs until we get an empty result
+      while (page <= maxPages) {
+        try {
+          this.logger.debug(`Fetching balance UTXO page ${page} for ${addresses.length} addresses`);
+          const pageUtxos = await this.cosignerService.fetchUtxos(addresses, page, limit);
+          if (pageUtxos.length === 0) {
+            this.logger.debug(`No more UTXOs found at page ${page}, stopping pagination`);
+            break;
+          }
+          utxos.push(...pageUtxos);
+          this.logger.debug(`Added ${pageUtxos.length} UTXOs from page ${page}, total: ${utxos.length}`);
+          page++;
+        } catch (error) {
+          this.logger.error(`Failed to fetch balance UTXO page ${page}:`, error);
+          throw new Error(`Failed to fetch UTXOs for balance calculation: ${error.message}`);
+        }
+      }
+      
+      if (page > maxPages) {
+        this.logger.warn(`Reached maximum page limit (${maxPages}) while fetching balance UTXOs`);
+      }
+      
+      this.logger.info(`Fetched ${utxos.length} total UTXOs across ${page - 1} pages for balance calculation`);
 
       // Sum up the token amounts
       const totalAvailableTokens = utxos.reduce((sum, utxo) => {
