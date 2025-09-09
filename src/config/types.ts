@@ -1,9 +1,14 @@
-import { CreateTransactionResponse, Fireblocks, StatusStatusEnum, TransactionResponse } from "@fireblocks/ts-sdk";
+import {
+  CreateTransactionResponse,
+  Fireblocks,
+  StatusStatusEnum,
+  TransactionResponse,
+} from "@fireblocks/ts-sdk";
 
 /**
  * Interface representing a UTXO (Unspent Transaction Output)
  */
-export interface UTXO {
+export interface UTXO_v1 {
   data: {
     bsv21: {
       amt: number;
@@ -27,6 +32,33 @@ export interface UTXO {
   script: string;
   txid: string;
   vout: number;
+}
+
+export interface UTXO_v2 {
+  data: {
+    bsv21: {
+      amt: number;
+      dec: number;
+      icon: string;
+      id: string;
+      op: string;
+      sym: string;
+    };
+    cosign: {
+      address: string;
+      cosigner: string;
+    };
+  };
+  height: number;
+  idx: number;
+  outpoint: string;
+  owners: [address: string];
+  satoshis: number;
+  score: number;
+  script: string;
+  txid: string;
+  vout: number;
+  senders: string[];
 }
 
 /**
@@ -64,7 +96,7 @@ export interface SignatureRequest {
   outputIndex: number;
   inputIndex: number;
   address: string;
-  bip44AddressIndex?: number;  // Add this field
+  bip44AddressIndex?: number; // Add this field
   script: string;
   satoshis: number;
   sigHashType: number;
@@ -100,7 +132,7 @@ export interface HashWithIndex {
   hash: Buffer;
   inputIndex: number;
   sigHashType: number;
-  bip44AddressIndex?: number; 
+  bip44AddressIndex?: number;
 }
 
 /**
