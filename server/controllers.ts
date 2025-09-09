@@ -191,24 +191,3 @@ export async function getAddressUtxos(
     res.status(500).json({ error: error.message });
   }
 }
-
-export async function createUtxoAddresses(
-  req: Request,
-  res: Response,
-  sdk: MNEEFireblocksSDK
-) {
-  try {
-    const vaultAccountId = req.params.vaultAccountId;
-    const addresses = await sdk.fireblocksService.createUtxoAddresses(
-      vaultAccountId
-    );
-
-    res.status(200).json({
-      vaultAccountId,
-      addresses,
-    });
-  } catch (error: any) {
-    logger.error("Error creating UTXO addresses:", error);
-    res.status(500).json({ error: error.message });
-  }
-}
