@@ -19,7 +19,7 @@ if (!fs.existsSync(tempDir)) {
 }
 
 // Mock environment variables if not set
-process.env.MNEE_COSIGNER_URL = process.env.MNEE_COSIGNER_URL || 'https://test-cosigner.example.com/v1';
+process.env.MNEE_COSIGNER_URL = process.env.MNEE_COSIGNER_URL || 'https://test-cosigner.example.com';
 process.env.FIREBLOCKS_SECRET_KEY_PATH = process.env.FIREBLOCKS_SECRET_KEY_PATH || path.join(tempDir, 'mock_fireblocks_key.key');
 process.env.FIREBLOCKS_API_KEY = process.env.FIREBLOCKS_API_KEY || 'test-api-key';
 process.env.MNEE_COSIGNER_AUTH_TOKEN = process.env.MNEE_COSIGNER_AUTH_TOKEN || 'test-auth-token';
