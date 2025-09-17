@@ -143,6 +143,24 @@ export class CosignerService {
       }
     });
   }
+
+  async fetchBalancesForAddresses(
+    addresses: string[]
+  ): Promise<{ address: string; amt: number; precised: number }[]> {
+    try {
+      this.logger.debug(`Fetching balances for ${addresses.length} addresses`);
+      const response = await this.axiosInstance.post(
+        `${this.endpoint}/v2/balance`,
+        addresses
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error("Error fetching balances:", error);
+      throw error;
+    }
+  }
+
   /**
    * Fetch transaction by transaction ID
    * @param txid Transaction ID
