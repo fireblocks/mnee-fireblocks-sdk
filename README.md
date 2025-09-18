@@ -47,7 +47,7 @@ docker-compose up
 Create a .env file in the project root with the following required variables:
 ```bash
 # Required environment variables
-MNEE_COSIGNER_URL='https://sandbox-cosigner.mnee.net/v1'
+MNEE_COSIGNER_URL='https://sandbox-cosigner.mnee.net'
 FIREBLOCKS_SECRET_KEY_PATH='/path/to/fireblocks_secret.key'
 FIREBLOCKS_API_KEY='your-fireblocks-api-key'
 MNEE_COSIGNER_AUTH_TOKEN='your-cosigner-auth-token'
@@ -60,7 +60,7 @@ The same .env file is used, but note that the secret key path in the Docker envi
 ```bash
 
 # Required environment variables for Docker deployment
-MNEE_COSIGNER_URL='https://sandbox-cosigner.mnee.net/v1'
+MNEE_COSIGNER_URL='https://sandbox-cosigner.mnee.net'
 FIREBLOCKS_SECRET_KEY_PATH='/secrets/fireblocks_secret.key'  # Don't change this path for Docker
 FIREBLOCKS_API_KEY='your-fireblocks-api-key'
 MNEE_COSIGNER_AUTH_TOKEN='your-cosigner-auth-token'

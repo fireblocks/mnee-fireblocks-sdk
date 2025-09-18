@@ -4,7 +4,7 @@ export { Logger, LogLevel } from './utils/logger.js';
 export * from './utils/fireblocks.utils.js';
 
 export type {
-  UTXO,
+  UTXO_v2,
   MNEEConfig,
   FireblocksSignature,
   SignatureRequest,

@@ -24,6 +24,7 @@ import {
   formatTokenAmount,
 } from "./utils/token.utils.js";
 import { Logger } from "./utils/logger.js";
+import { AxiosError } from "axios";
 
 /**
  * MNEE Fireblocks SDK
@@ -51,38 +52,46 @@ export class MNEEFireblocksSDK {
     fireblocksApiKey: string,
     defaultVaultAccountId?: string
   ) {
-    this.logger = new Logger('MNEEFireblocksSDK');
+    this.logger = new Logger("MNEEFireblocksSDK");
 
     // Validate required parameters
     if (!cosignerEndpoint) {
       this.logger.error("Cosigner endpoint (MNEE_COSIGNER_URL) is required");
       throw new Error("Cosigner endpoint (MNEE_COSIGNER_URL) is required");
     }
-    
+
     if (!fireblocksSecretKeyPath) {
-      this.logger.error("Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required");
-      throw new Error("Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required");
+      this.logger.error(
+        "Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required"
+      );
+      throw new Error(
+        "Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required"
+      );
     }
-    
+
     if (!fireblocksApiKey) {
       this.logger.error("Fireblocks API key (FIREBLOCKS_API_KEY) is required");
       throw new Error("Fireblocks API key (FIREBLOCKS_API_KEY) is required");
     }
-    
+
     // Check that the secret key file exists
     try {
-      readFileSync(fireblocksSecretKeyPath, { encoding: 'utf8' });
+      readFileSync(fireblocksSecretKeyPath, { encoding: "utf8" });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.logger.error(`Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`);
-        throw new Error(`Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`);
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.logger.error(
+          `Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`
+        );
+        throw new Error(
+          `Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`
+        );
       } else {
         throw error;
       }
     }
 
     // Initialize the vault account ID if provided (as default)
-    this.vaultAccountId = defaultVaultAccountId || '';
+    this.vaultAccountId = defaultVaultAccountId || "";
 
     // Initialize the cosigner service
     this.cosignerService = new CosignerService(cosignerEndpoint);
@@ -104,7 +113,13 @@ export class MNEEFireblocksSDK {
       this.oneSatOrd = await loadOneSatOrd();
     })();
 
-    this.logger.info(`MNEE Fireblocks SDK initialized${defaultVaultAccountId ? ` with default vault account ${defaultVaultAccountId}` : ''}`);
+    this.logger.info(
+      `MNEE Fireblocks SDK initialized${
+        defaultVaultAccountId
+          ? ` with default vault account ${defaultVaultAccountId}`
+          : ""
+      }`
+    );
   }
 
   /**
@@ -177,7 +192,48 @@ export class MNEEFireblocksSDK {
 
       // Fetch UTXOs to determine total tokens available
       this.logger.info("Fetching MNEE UTXOs");
-      const utxos = await this.cosignerService.fetchUtxos([senderAddress]);
+      const utxos = [];
+      let page = 1;
+      const limit = 1;
+      const maxPages = 100; // Safety limit to prevent infinite loops
+
+      // Fetch all pages of UTXOs until we get an empty result
+      while (page <= maxPages) {
+        try {
+          this.logger.debug(`Fetching UTXO page ${page}`);
+          const pageUtxos = await this.cosignerService.fetchUtxos(
+            [senderAddress],
+            page,
+            limit
+          );
+          if (pageUtxos.length === 0) {
+            this.logger.debug(
+              `No more UTXOs found at page ${page}, stopping pagination`
+            );
+            break;
+          }
+          utxos.push(...pageUtxos);
+          this.logger.debug(
+            `Added ${pageUtxos.length} UTXOs from page ${page}, total: ${utxos.length}`
+          );
+          page++;
+        } catch (error) {
+          this.logger.error(`Failed to fetch UTXO page ${page}:`, error);
+          throw new Error(
+            `Failed to fetch UTXOs for transaction: ${error.message}`
+          );
+        }
+      }
+
+      if (page > maxPages) {
+        this.logger.warn(
+          `Reached maximum page limit (${maxPages}) while fetching UTXOs`
+        );
+      }
+
+      this.logger.info(
+        `Fetched ${utxos.length} total UTXOs across ${page - 1} pages`
+      );
 
       // Calculate total available tokens
       const totalAvailableTokens = utxos.reduce(
@@ -279,7 +335,9 @@ export class MNEEFireblocksSDK {
 
       // Add inputs to transaction
       for (const [index, utxo] of selectedUtxos.entries()) {
-        this.logger.info(`Adding input #${index} from UTXO ${utxo.txid}:${utxo.vout}`);
+        this.logger.info(
+          `Adding input #${index} from UTXO ${utxo.txid}:${utxo.vout}`
+        );
         const sourceTransaction = await this.cosignerService.fetchTransaction(
           utxo.txid
         );
@@ -337,7 +395,9 @@ export class MNEEFireblocksSDK {
       // Add change output if needed
       const changeTokenSatAmt = tokensIn - amountNeeded;
       if (changeTokenSatAmt > 0) {
-        this.logger.info(`Adding change output with ${changeTokenSatAmt} tokens`);
+        this.logger.info(
+          `Adding change output with ${changeTokenSatAmt} tokens`
+        );
         const changeDataB64 = this.transactionService.createInscriptionData(
           this.tokenConfig.tokenId,
           changeTokenSatAmt
@@ -363,7 +423,9 @@ export class MNEEFireblocksSDK {
         // Extract bip44AddressIndex from walletObject, if present
         const bip44AddressIndex = walletObject.bip44AddressIndex || 0;
         // Create an array of BIP44 address indexes for each signing address
-        const bip44AddressIndexes = signingAddresses.map(() => bip44AddressIndex);
+        const bip44AddressIndexes = signingAddresses.map(
+          () => bip44AddressIndex
+        );
 
         // Update the prepareSignatureRequests call
         const sigRequests = this.transactionService.prepareSignatureRequests(
@@ -384,8 +446,8 @@ export class MNEEFireblocksSDK {
           rawtx,
           sigRequests,
           recipient,
-          walletObject.vaultAccountId,  // Pass the vault account ID
-          tokenAmountForNote 
+          walletObject.vaultAccountId, // Pass the vault account ID
+          tokenAmountForNote
         );
 
         if (!signatures || signatures.length === 0) {
@@ -404,6 +466,14 @@ export class MNEEFireblocksSDK {
         const response = await this.cosignerService.submitTransaction(
           rawTxBase64
         );
+
+        // Validate response
+        if (!response || !response.rawtx) {
+          this.logger.error("Invalid response from cosigner - missing rawtx");
+          throw new Error(
+            "Invalid response from cosigner: missing transaction data"
+          );
+        }
 
         // Parse transaction hash from response
         const hexTransaction = Buffer.from(response.rawtx, "base64").toString(
@@ -479,7 +549,52 @@ export class MNEEFireblocksSDK {
       });
 
       // Fetch UTXOs for all addresses in the vault
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
+      const utxos = [];
+      let page = 1;
+      const limit = 100;
+      const maxPages = 100; // Safety limit to prevent infinite loops
+
+      // Fetch all pages of UTXOs until we get an empty result
+      while (page <= maxPages) {
+        try {
+          this.logger.debug(
+            `Fetching vault UTXO page ${page} for ${addresses.length} addresses`
+          );
+          const pageUtxos = await this.cosignerService.fetchUtxos(
+            addresses,
+            page,
+            limit
+          );
+          if (pageUtxos.length === 0) {
+            this.logger.debug(
+              `No more UTXOs found at page ${page}, stopping pagination`
+            );
+            break;
+          }
+          utxos.push(...pageUtxos);
+          this.logger.debug(
+            `Added ${pageUtxos.length} UTXOs from page ${page}, total: ${utxos.length}`
+          );
+          page++;
+        } catch (error) {
+          this.logger.error(`Failed to fetch vault UTXO page ${page}:`, error);
+          throw new Error(
+            `Failed to fetch UTXOs for vault ${sourceVaultAccountId}: ${error.message}`
+          );
+        }
+      }
+
+      if (page > maxPages) {
+        this.logger.warn(
+          `Reached maximum page limit (${maxPages}) while fetching vault UTXOs`
+        );
+      }
+
+      this.logger.info(
+        `Fetched ${utxos.length} total UTXOs across ${
+          page - 1
+        } pages for vault ${sourceVaultAccountId}`
+      );
 
       // Calculate total available tokens across all addresses
       const totalAvailableTokens = utxos.reduce((sum, utxo) => {
@@ -618,7 +733,10 @@ export class MNEEFireblocksSDK {
         options
       );
     } catch (error) {
-      this.logger.error("Error in transferTokensFromVault:", error);
+      this.logger.error(
+        "Error in transferTokensFromVault:",
+        error instanceof AxiosError ? error.message : error
+      );
       throw error;
     }
   }
@@ -638,15 +756,14 @@ export class MNEEFireblocksSDK {
       this.logger.info(`Calculating balance for ${addresses.length} addresses`);
 
       // Fetch UTXOs for the provided addresses
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
+
+      const balances = await this.cosignerService.fetchBalancesForAddresses(
+        addresses
+      );
 
       // Sum up the token amounts
-      const totalAvailableTokens = utxos.reduce((sum, utxo) => {
-        // Make sure bsv21 data exists before trying to access amt
-        if (utxo.data?.bsv21?.amt) {
-          return sum + utxo.data.bsv21.amt;
-        }
-        return sum;
+      const totalAvailableTokens = balances.reduce((sum, balance) => {
+        return sum + balance.amt;
       }, 0);
 
       this.logger.info(
@@ -676,7 +793,9 @@ export class MNEEFireblocksSDK {
       this.logger.info(`Getting balance for vault account ${vaultAccountId}`);
 
       // Get all BSV addresses associated with this vault account (updated)
-      const addresses = await this.fireblocksService.getVaultAddresses(vaultAccountId);
+      const addresses = await this.fireblocksService.getVaultAddresses(
+        vaultAccountId
+      );
 
       if (!addresses || addresses.length === 0) {
         this.logger.info("No addresses found for vault account");

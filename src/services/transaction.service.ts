@@ -9,7 +9,7 @@ import {
 } from "@bsv/sdk";
 import { 
   SignatureRequest, 
-  UTXO,
+  UTXO_v2 as UTXO,
   FireblocksSignature,
   HashWithIndex
 } from "../config/types.js";
