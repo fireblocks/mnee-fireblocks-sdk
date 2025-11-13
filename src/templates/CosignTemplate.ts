@@ -1,4 +1,4 @@
-import { LockingScript, UnlockingScript, OP, PublicKey, Utils } from "@bsv/sdk";
+import { LockingScript, OP, PublicKey, Utils } from "@bsv/sdk";
 
 /**
  * Cosigning template for MNEE tokens
@@ -36,36 +36,5 @@ export class CosignTemplate {
       .writeOpCode(OP.OP_CHECKSIG);
 
     return lockingScript;
-  }
-
-  /**
-   * Creates a function that generates a P2PKH unlocking script along with its signature and length estimation.
-   *
-   * @param {string} userSignature - DER encoded signature with hash type
-   * @param {string} userPubKey - User's public key in hex
-   * @param {string} signOutputs - The signature scope for outputs
-   * @param {boolean} anyoneCanPay - Flag indicating if the signature allows for other inputs to be added later
-   * @returns {Object} - An object containing the `getUnlockingScript` and `estimateLength` functions
-   */
-  userUnlock(
-    userSignature: string,
-    userPubKey: string,
-    signOutputs: 'all'|'none'|'single' = 'all',
-    anyoneCanPay: boolean = false
-  ): {
-    getUnlockingScript: () => UnlockingScript;
-    estimateLength: () => number;
-  } {
-    return {
-      getUnlockingScript: (): UnlockingScript => {
-        const unlockScript = new UnlockingScript();
-        unlockScript.writeBin(Utils.toArray(userSignature, "hex"));
-        unlockScript.writeBin(Utils.toArray(userPubKey, "hex"));
-        return unlockScript;
-      },
-      estimateLength: (): number => {
-        return 108;
-      },
-    };
   }
 }

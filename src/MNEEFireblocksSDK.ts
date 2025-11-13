@@ -372,20 +372,17 @@ export class MNEEFireblocksSDK {
           bip44AddressIndexes
         );
 
-        // Convert transaction to hex for signing
-        const rawtx = tx.toHex();
-
         // Pass the actual token amount (in MNEE tokens, not satoshis) that the recipient will receive
         const tokenAmountForNote = satoshisToTokens(tokenSatAmt);
 
         // Get signatures from Fireblocks
         this.logger.info("Getting signatures from Fireblocks");
         const signatures = await this.transactionService.getSignatures(
-          rawtx,
+          tx,
           sigRequests,
           recipient,
           walletObject.vaultAccountId,  // Pass the vault account ID
-          tokenAmountForNote 
+          tokenAmountForNote
         );
 
         if (!signatures || signatures.length === 0) {
@@ -394,11 +391,11 @@ export class MNEEFireblocksSDK {
         }
 
         // Apply signatures to transaction
-        this.transactionService.applySignatures(tx, signatures);
+        const signedTx = this.transactionService.applySignatures(tx, signatures);
 
         // Convert signed transaction to base64
         this.logger.info("Submitting signed transaction");
-        const rawTxBase64 = Utils.toBase64(tx.toBinary());
+        const rawTxBase64 = Utils.toBase64(signedTx.toBinary());
 
         // Submit transaction to cosigner
         const response = await this.cosignerService.submitTransaction(
@@ -406,11 +403,8 @@ export class MNEEFireblocksSDK {
         );
 
         // Parse transaction hash from response
-        const hexTransaction = Buffer.from(response.rawtx, "base64").toString(
-          "hex"
-        );
-        const txObj = Transaction.fromHex(hexTransaction);
-        const transactionHash = Buffer.from(txObj.id()).toString("hex");
+        const hexTransaction = Utils.toHex(Array.from(Buffer.from(response.rawtx, "base64")));
+        const transactionHash = Transaction.fromHex(hexTransaction).id('hex');
 
         this.logger.info(`Transaction successful. Hash: ${transactionHash}`);
 

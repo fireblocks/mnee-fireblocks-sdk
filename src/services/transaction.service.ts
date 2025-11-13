@@ -1,22 +1,18 @@
 import { createHash } from "crypto";
-import { 
-  Transaction, 
-  LockingScript, 
-  UnlockingScript, 
-  TransactionSignature, 
-  Utils, 
-  PublicKey 
+import {
+  Transaction,
+  LockingScript,
+  UnlockingScript,
+  TransactionSignature,
+  Utils,
 } from "@bsv/sdk";
-import { 
-  SignatureRequest, 
+import {
+  SignatureRequest,
   UTXO,
-  FireblocksSignature,
   HashWithIndex
 } from "../config/types.js";
-import { CosignTemplate } from "../templates/CosignTemplate.js";
 import { FireblocksService } from "./fireblocks.service.js";
 import { createDERSignature } from "../utils/crypto.utils.js";
-import { satoshisToTokens } from "../utils/token.utils.js";
 import { Logger } from "../utils/logger.js";
 
 /**
@@ -163,7 +159,7 @@ export class TransactionService {
 
   /**
    * Get signatures for transaction inputs
-   * @param rawtx Raw transaction in hex
+   * @param tx Transaction object to sign
    * @param sigRequests Signature requests for each input
    * @param destination Destination address
    * @param vaultAccountId Vault account ID to sign with
@@ -171,7 +167,7 @@ export class TransactionService {
    * @returns Promise resolving to array of signatures
    */
   async getSignatures(
-    rawtx: string,
+    tx: Transaction,
     sigRequests: SignatureRequest[],
     destination: string,
     vaultAccountId: string,  // Add vaultAccountId parameter
@@ -179,8 +175,7 @@ export class TransactionService {
   ): Promise<Array<{ inputIndex: number; sig: string; pubKey: string }>> {
     try {
       this.logger.info(`Getting signatures for ${sigRequests.length} inputs from vault ${vaultAccountId}`);
-      const tx = Transaction.fromHex(rawtx);
-      
+
       // Prepare all hashes to be signed
       const hashesWithIndices: Array<HashWithIndex & { bip44AddressIndex?: number }> = sigRequests.map(request => {
         const sigHash = this.createSignatureHash(
@@ -248,30 +243,30 @@ export class TransactionService {
     tx: Transaction,
     signatures: Array<{ inputIndex: number; sig: string; pubKey: string }>
   ): Transaction {
-    const cosignTemplate = new CosignTemplate();
-
     this.logger.info(`Applying ${signatures.length} signatures to transaction`);
+
     for (const sigResponse of signatures) {
       const { inputIndex, sig, pubKey } = sigResponse;
-      const unlockingScriptCreator = cosignTemplate.userUnlock(
-        sig,
-        pubKey,
-        "all",
-        true
-      );
 
-      const unlockingScript = unlockingScriptCreator.getUnlockingScript();
-      tx.inputs[inputIndex].unlockingScript = unlockingScript;
+      // Log before applying
+      this.logger.debug(`Applying signature to input ${inputIndex}`);
+      this.logger.debug(`Signature: ${sig.substring(0, 32)}...`);
+      this.logger.debug(`Public key: ${pubKey}`);
 
+      // Apply signature using MNEE SDK pattern
+      tx.inputs[inputIndex].unlockingScript = new UnlockingScript()
+        .writeBin(Utils.toArray(sig, 'hex'))
+        .writeBin(Utils.toArray(pubKey, 'hex'));
+
+      // Log after applying
       this.logger.debug(`Applied signature to input ${inputIndex}`);
-      this.logger.debug(`Unlocking script length: ${unlockingScript.toBinary().length}`);
+      this.logger.debug(`Unlocking script length: ${tx.inputs[inputIndex].unlockingScript.toBinary().length}`);
+      this.logger.debug(`Unlocking script hex: ${tx.inputs[inputIndex].unlockingScript.toHex()}`);
     }
 
+    // Log final state
     if (tx.inputs.length > 0) {
-      this.logger.debug(
-        "First input unlocking script:",
-        tx.inputs[0].unlockingScript.toHex()
-      );
+      this.logger.debug(`First input unlocking script: ${tx.inputs[0].unlockingScript.toHex()}`);
     }
 
     return tx;
