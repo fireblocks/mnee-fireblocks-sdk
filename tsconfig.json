@@ -1,5 +1,4 @@
 {
-  
   "compilerOptions": {
     "target": "ES2020",
     "isolatedModules": true,
@@ -10,8 +9,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
-    "strict": false
+    "strict": false,
+    "declaration": true,
+    "declarationMap": true
   },
   "include": ["src/**/*", "test.ts"]
-  
 }

@@ -13,3 +13,7 @@ export type {
   TransactionHashResponse,
   HashWithIndex
 } from './config/types.js';
+
+// Default export for convenience
+import { MNEEFireblocksSDK } from './MNEEFireblocksSDK.js';
+export default MNEEFireblocksSDK;
