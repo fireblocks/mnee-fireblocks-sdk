@@ -1,8 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import { Transaction, Utils } from "@bsv/sdk";
-import { MNEEConfig, TransactionForAddress, UTXO } from "../config/types.js";
+import { MNEEConfig, TicketResponse, TransactionForAddress, UTXO } from "../config/types.js";
 import { Logger } from "../utils/logger.js";
-import 'dotenv/config.js';
+import "dotenv/config.js";
 
 /**
  * Service for interacting with MNEE cosigner
@@ -19,18 +19,22 @@ export class CosignerService {
    * @param endpoint Cosigner API endpoint
    */
   constructor(endpoint: string) {
-    this.logger = new Logger('CosignerService');
+    this.logger = new Logger("CosignerService");
     this.endpoint = endpoint;
     this.authToken = process.env.MNEE_COSIGNER_AUTH_TOKEN;
 
-    if(!this.authToken) {
-      this.logger.error("MNEE_COSIGNER_AUTH_TOKEN is not set in environment variables");
-      throw new Error("MNEE_COSIGNER_AUTH_TOKEN is not set in environment variables");
+    if (!this.authToken) {
+      this.logger.error(
+        "MNEE_COSIGNER_AUTH_TOKEN is not set in environment variables"
+      );
+      throw new Error(
+        "MNEE_COSIGNER_AUTH_TOKEN is not set in environment variables"
+      );
     }
 
     this.axiosInstance = axios.create({
       params: {
-        auth_token: this.authToken
+        auth_token: this.authToken,
       },
       headers: {
         "Content-Type": "application/json",
@@ -52,7 +56,9 @@ export class CosignerService {
       }
 
       this.logger.info("Fetching MNEE configuration");
-      const response = await this.axiosInstance.get(`${this.endpoint}/config`);
+      const response = await this.axiosInstance.get(
+        `${this.endpoint}/v1/config`
+      );
       this.config = response.data;
       this.logger.debug("MNEE configuration fetched successfully");
       return this.config;
@@ -70,7 +76,7 @@ export class CosignerService {
   async fetchUtxos(addresses: string[]): Promise<UTXO[]> {
     try {
       const response = await this.axiosInstance.post(
-        `${this.endpoint}/utxos`,
+        `${this.endpoint}/v2/utxos`,
         addresses
       );
       return response.data;
@@ -88,7 +94,7 @@ export class CosignerService {
   async fetchTransaction(txid: string): Promise<Transaction> {
     try {
       const response = await this.axiosInstance.get(
-        `${this.endpoint}/tx/${txid}`
+        `${this.endpoint}/v1/tx/${txid}`
       );
       if (!response.data || !response.data.rawtx) {
         throw new Error("Failed to fetch transaction");
@@ -108,20 +114,25 @@ export class CosignerService {
    * @param rawTxBase64 Base64 encoded transaction
    * @returns Promise resolving to transaction response
    */
-  async submitTransaction(rawTxBase64: string): Promise<{ rawtx: string }> {
+  async submitTransaction(rawTxBase64: string): Promise<{ rawHex: string }> {
     try {
-      const response = await this.axiosInstance.post(
-        `${this.endpoint}/transfer`,
+      const response = await this.axiosInstance.post<string>(
+        `${this.endpoint}/v2/transfer`,
         { rawtx: rawTxBase64 }
       );
-      return response.data;
+      if (!response.data) {
+        throw new Error("Failed to submit transaction");
+      }
+      const ticketId = response.data;
+      const result = await this.waitForV2Completion(ticketId, Date.now(), 25000);
+      return {rawHex: result.tx_hex};
     } catch (error) {
       console.error("Error submitting transaction:", error);
-      
+
       if (axios.isAxiosError(error)) {
         const axiosError = error as AxiosError;
         const status = axiosError.response?.status;
-        const errorData = axiosError.response?.data as any || {};
+        const errorData = (axiosError.response?.data as any) || {};
 
         switch (status) {
           case 423:
@@ -153,10 +164,43 @@ export class CosignerService {
     }
   }
 
-  async getTransactionsForAddresses(addresses: string[]): Promise<TransactionForAddress[]> {
+  private async waitForV2Completion(
+    ticketId: string,
+    startTime: number,
+    maxWaitTime: number
+  ): Promise<TicketResponse> {
+    const checkInterval = 1000; // Check every second
+
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        const response = await this.axiosInstance.get<TicketResponse>(
+          `${this.endpoint}/v2/ticket?ticketID=${ticketId}`
+        );
+        const status = response.data.status;  
+        if (status === "SUCCESS" || status === "MINED") {
+          return response.data;
+        }
+
+        if (status === "FAILED") {
+          return response.data;
+        }
+      } catch (error) {
+        this.logger.warn(`Error checking status for ${ticketId}:`, error);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, checkInterval));
+    }
+
+    this.logger.error(`Transaction ${ticketId} timed out after ${maxWaitTime}ms`);
+    throw new Error(`Transaction ${ticketId} timed out after ${maxWaitTime}ms`);
+  }
+
+  async getTransactionsForAddresses(
+    addresses: string[]
+  ): Promise<TransactionForAddress[]> {
     try {
       const response = await this.axiosInstance.post(
-        `${this.endpoint}/sync`,
+        `${this.endpoint}/v1/sync`,
         addresses
       );
       return response.data;

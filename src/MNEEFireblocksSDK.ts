@@ -402,9 +402,7 @@ export class MNEEFireblocksSDK {
           rawTxBase64
         );
 
-        // Parse transaction hash from response
-        const hexTransaction = Utils.toHex(Array.from(Buffer.from(response.rawtx, "base64")));
-        const transactionHash = Transaction.fromHex(hexTransaction).id('hex');
+        const transactionHash = Transaction.fromHex(response.rawHex).id('hex');
 
         this.logger.info(`Transaction successful. Hash: ${transactionHash}`);
 
