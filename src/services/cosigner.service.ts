@@ -1,7 +1,14 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
-import Mnee, { MNEEBalance, TransferStatus, MNEEConfig, MNEEUtxo, MneeSync } from "mnee";
+import Mnee, {
+  MNEEBalance,
+  TransferStatus,
+  MNEEConfig,
+  MNEEUtxo,
+  MneeSync,
+} from "mnee";
 import { Logger } from "../utils/logger.js";
 import "dotenv/config.js";
+import { Utils } from "@bsv/sdk";
 
 /**
  * Service for interacting with MNEE cosigner
@@ -87,7 +94,7 @@ export class CosignerService {
       const allUtxos: MNEEUtxo[] = [];
       for (const address of addresses) {
         const utxos = await this.mnee.getAllUtxos(address);
-        utxos.forEach(utxo => allUtxos.push(utxo));
+        utxos.forEach((utxo) => allUtxos.push(utxo));
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
       this.logger.debug(`Fetching all UTXOs for ${addresses.length} addresses`);
@@ -135,7 +142,9 @@ export class CosignerService {
 
         if (totalCollected >= requiredAmount) {
           this.logger.info(
-            `Sufficient UTXOs found after ${addresses.indexOf(address) + 1}/${addresses.length} addresses`
+            `Sufficient UTXOs found after ${addresses.indexOf(address) + 1}/${
+              addresses.length
+            } addresses`
           );
           break;
         }
@@ -148,8 +157,9 @@ export class CosignerService {
           `Insufficient tokens across all addresses: have ${totalCollected}, need ${requiredAmount}`
         );
         throw new Error(
-          `Insufficient tokens: have ${this.mnee.fromAtomicAmount(totalCollected)}, ` +
-          `need ${this.mnee.fromAtomicAmount(requiredAmount)} MNEE`
+          `Insufficient tokens: have ${this.mnee.fromAtomicAmount(
+            totalCollected
+          )}, ` + `need ${this.mnee.fromAtomicAmount(requiredAmount)} MNEE`
         );
       }
 
@@ -193,11 +203,17 @@ export class CosignerService {
     try {
       const response = await this.mnee.submitRawTx(rawHex);
       const ticketId = response.ticketId;
+      this.logger.info(`Ticket ID: ${ticketId}`);
       const result = await this.waitForV2Completion(
         ticketId,
         Date.now(),
         25000
       );
+
+      if (result.status === "FAILED") {
+        throw new Error(`Transaction failed: ${result.errors}`);
+      }
+
       return { rawHex: result.tx_hex };
     } catch (error) {
       console.error("Error submitting transaction:", error);
@@ -247,6 +263,7 @@ export class CosignerService {
     while (Date.now() - startTime < maxWaitTime) {
       try {
         const response = await this.mnee.getTxStatus(ticketId);
+        this.logger.info(`Ticket ID: ${ticketId} status: ${response.status}`);
         if (response.status === "SUCCESS" || response.status === "MINED") {
           return response;
         }
@@ -267,9 +284,7 @@ export class CosignerService {
     throw new Error(`Transaction ${ticketId} timed out after ${maxWaitTime}ms`);
   }
 
-  async getTransactionsForAddresses(
-    addresses: string[]
-  ): Promise<MneeSync[]> {
+  async getTransactionsForAddresses(addresses: string[]): Promise<MneeSync[]> {
     try {
       const response = await this.axiosInstance.post<MneeSync[]>(
         `${this.endpoint}/v1/sync`,

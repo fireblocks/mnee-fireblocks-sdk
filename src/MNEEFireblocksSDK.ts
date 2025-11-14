@@ -269,20 +269,44 @@ export class MNEEFireblocksSDK {
         });
 
       this.logger.info(
+        `Addresses in vault map: ${Array.from(
+          walletObject.addressToBip44Map.entries()
+        )
+          .map(([addr, idx]) => `${addr}:${idx}`)
+          .join(", ")}`
+      );
+      this.logger.info(
         `Transaction built with ${tx.inputs.length} inputs and ${tx.outputs.length} outputs`
       );
 
       try {
         // Enrich SDK signature requests with BIP44 address indexes for Fireblocks signing
-        // SDK provides sigRequests with address info, we add the BIP44 derivation path
+        // The SDK doesn't populate the address field, so we need to get it from the selected UTXOs
+        // Each signature request corresponds to an input, and each input comes from a selected UTXO
         const sigRequests = sdkSigRequests.map((req) => {
-          const address = Array.isArray(req.address)
-            ? req.address[0]
-            : req.address;
+          // Get the UTXO for this input by matching the input index
+          const utxo = selectedUtxos[req.inputIndex];
+
+          if (!utxo) {
+            throw new Error(`No UTXO found for input index ${req.inputIndex}`);
+          }
+
+          // Get the address that owns this UTXO (the first owner in the multisig array)
+          const address = Array.isArray(utxo.owners) ? utxo.owners[0] : utxo.owners;
 
           // Look up BIP44 index for this address from the map
-          const bip44AddressIndex =
-            walletObject.addressToBip44Map.get(address) ?? 0;
+          const bip44AddressIndex = walletObject.addressToBip44Map.get(address);
+
+          if (bip44AddressIndex === undefined) {
+            throw new Error(
+              `Address ${address} for input ${req.inputIndex} not found in vault addresses. ` +
+              `Available addresses: ${Array.from(walletObject.addressToBip44Map.keys()).join(', ')}`
+            );
+          }
+
+          this.logger.debug(
+            `Input ${req.inputIndex}: address=${address}, BIP44=${bip44AddressIndex}`
+          );
 
           return {
             ...req,
@@ -290,10 +314,13 @@ export class MNEEFireblocksSDK {
             bip44AddressIndex,
             // Ensure all required fields are present
             script: req.script || "",
-            sigHashType:
-              req.sigHashType || (0x41 | 0x40 | 0x01), // SIGHASH_ALL | ANYONECANPAY | FORKID
+            sigHashType: req.sigHashType || 0x41 | 0x40 | 0x01, // SIGHASH_ALL | ANYONECANPAY | FORKID
           };
         });
+
+        this.logger.info(
+          `Mapped ${sigRequests.length} signature requests to their correct BIP44 indexes`
+        );
 
         // Pass the actual token amount (in MNEE tokens, not satoshis) that the recipient will receive
         const tokenAmountForNote =
@@ -409,7 +436,9 @@ export class MNEEFireblocksSDK {
 
       if (amount === undefined) {
         // Full balance withdrawal - fetch all UTXOs
-        this.logger.info("Full balance withdrawal requested - fetching all UTXOs");
+        this.logger.info(
+          "Full balance withdrawal requested - fetching all UTXOs"
+        );
         utxos = await this.cosignerService.fetchUtxos(addresses);
 
         const totalAvailableTokens = utxos.reduce(
@@ -418,7 +447,11 @@ export class MNEEFireblocksSDK {
         );
 
         this.logger.info(
-          `Fetched ${utxos.length} UTXOs totaling ${this.mneeInstance.fromAtomicAmount(totalAvailableTokens)} MNEE`
+          `Fetched ${
+            utxos.length
+          } UTXOs totaling ${this.mneeInstance.fromAtomicAmount(
+            totalAvailableTokens
+          )} MNEE`
         );
 
         satoshiAmount = totalAvailableTokens;
@@ -427,10 +460,15 @@ export class MNEEFireblocksSDK {
         // Specified amount transfer - only fetch enough UTXOs
         satoshiAmount = this.mneeInstance.toAtomicAmount(amount);
         this.logger.info(
-          `Transfer ${this.mneeInstance.fromAtomicAmount(satoshiAmount)} MNEE requested - fetching optimized UTXOs`
+          `Transfer ${this.mneeInstance.fromAtomicAmount(
+            satoshiAmount
+          )} MNEE requested - fetching optimized UTXOs`
         );
 
-        utxos = await this.cosignerService.fetchEnoughUtxos(addresses, satoshiAmount);
+        utxos = await this.cosignerService.fetchEnoughUtxos(
+          addresses,
+          satoshiAmount
+        );
 
         this.logger.info(
           `Optimized fetch: collected ${utxos.length} UTXOs (vs potentially all UTXOs)`
