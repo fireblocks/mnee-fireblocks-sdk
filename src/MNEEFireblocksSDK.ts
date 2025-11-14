@@ -1,29 +1,16 @@
 import { readFileSync } from "fs";
-import {
-  Transaction,
-  UnlockingScript,
-  PublicKey,
-  Utils,
-  LockingScript,
-} from "@bsv/sdk";
+import { Transaction } from "@bsv/sdk";
 import { BasePath, Fireblocks } from "@fireblocks/ts-sdk";
 import {
-  MNEEConfig,
   TransactionHashResponse,
   TransferOptions,
   WalletObject,
 } from "./config/types.js";
-import { loadOneSatOrd } from "./utils/oneSatOrdLoader.js";
 import { CosignerService } from "./services/cosigner.service.js";
 import { FireblocksService } from "./services/fireblocks.service.js";
 import { TransactionService } from "./services/transaction.service.js";
-import { CosignTemplate } from "./templates/CosignTemplate.js";
-import {
-  satoshisToTokens,
-  tokensToSatoshis,
-  formatTokenAmount,
-} from "./utils/token.utils.js";
 import { Logger } from "./utils/logger.js";
+import Mnee, { MNEEConfig, MNEEUtxo } from "mnee";
 
 /**
  * MNEE Fireblocks SDK
@@ -33,11 +20,9 @@ export class MNEEFireblocksSDK {
   public cosignerService: CosignerService;
   public fireblocksService: FireblocksService;
   private transactionService: TransactionService;
-  private oneSatOrd: any = null;
   private tokenConfig: MNEEConfig | null = null;
-  private vaultAccountId: string;
   private logger: Logger;
-
+  private mneeInstance: Mnee;
   /**
    * Initialize the MNEE Fireblocks SDK
    * @param cosignerEndpoint MNEE cosigner endpoint
@@ -51,38 +36,42 @@ export class MNEEFireblocksSDK {
     fireblocksApiKey: string,
     defaultVaultAccountId?: string
   ) {
-    this.logger = new Logger('MNEEFireblocksSDK');
-
+    this.logger = new Logger("MNEEFireblocksSDK");
     // Validate required parameters
     if (!cosignerEndpoint) {
       this.logger.error("Cosigner endpoint (MNEE_COSIGNER_URL) is required");
       throw new Error("Cosigner endpoint (MNEE_COSIGNER_URL) is required");
     }
-    
+
     if (!fireblocksSecretKeyPath) {
-      this.logger.error("Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required");
-      throw new Error("Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required");
+      this.logger.error(
+        "Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required"
+      );
+      throw new Error(
+        "Fireblocks secret key path (FIREBLOCKS_SECRET_KEY_PATH) is required"
+      );
     }
-    
+
     if (!fireblocksApiKey) {
       this.logger.error("Fireblocks API key (FIREBLOCKS_API_KEY) is required");
       throw new Error("Fireblocks API key (FIREBLOCKS_API_KEY) is required");
     }
-    
+
     // Check that the secret key file exists
     try {
-      readFileSync(fireblocksSecretKeyPath, { encoding: 'utf8' });
+      readFileSync(fireblocksSecretKeyPath, { encoding: "utf8" });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.logger.error(`Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`);
-        throw new Error(`Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`);
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.logger.error(
+          `Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`
+        );
+        throw new Error(
+          `Fireblocks secret key file not found: ${fireblocksSecretKeyPath}`
+        );
       } else {
         throw error;
       }
     }
-
-    // Initialize the vault account ID if provided (as default)
-    this.vaultAccountId = defaultVaultAccountId || '';
 
     // Initialize the cosigner service
     this.cosignerService = new CosignerService(cosignerEndpoint);
@@ -99,53 +88,23 @@ export class MNEEFireblocksSDK {
     // Initialize the transaction service
     this.transactionService = new TransactionService(this.fireblocksService);
 
-    // Load the oneSatOrd module
-    (async () => {
-      this.oneSatOrd = await loadOneSatOrd();
-    })();
+    this.mneeInstance = this.cosignerService.mnee;
 
-    this.logger.info(`MNEE Fireblocks SDK initialized${defaultVaultAccountId ? ` with default vault account ${defaultVaultAccountId}` : ''}`);
+    this.logger.info(
+      `MNEE Fireblocks SDK initialized${
+        defaultVaultAccountId
+          ? ` with default vault account ${defaultVaultAccountId}`
+          : ""
+      }`
+    );
   }
 
   /**
-   * Apply inscription to a locking script
-   * @param lockingScript Locking script or address
-   * @param options Options containing dataB64 and contentType
-   * @returns Promise resolving to modified locking script
-   */
-  private async applyInscription(
-    lockingScript: LockingScript | string,
-    options: { dataB64: string; contentType: string }
-  ): Promise<LockingScript> {
-    // Make sure module is loaded
-    if (!this.oneSatOrd) {
-      this.oneSatOrd = await loadOneSatOrd();
-    }
-
-    // Make sure token config is loaded
-    if (!this.tokenConfig) {
-      this.tokenConfig = await this.cosignerService.fetchConfig();
-    }
-
-    // Apply inscription
-    if (lockingScript instanceof LockingScript) {
-      return this.oneSatOrd.applyInscription(lockingScript, options);
-    } else {
-      return this.oneSatOrd.applyInscription(
-        new CosignTemplate().lock(
-          lockingScript,
-          PublicKey.fromString(this.tokenConfig.approver)
-        ),
-        options
-      );
-    }
-  }
-
-  /**
-   * Transfer MNEE tokens
+   * Transfer MNEE tokens (private method called by transferTokensFromVault)
    * @param recipient Recipient address
    * @param amount Amount to transfer in satoshis
-   * @param walletObject Wallet object with ordAddress and vaultAccountId
+   * @param walletObject Wallet object with vaultAccountId and addressToBip44Map
+   * @param utxos UTXOs to use for the transfer
    * @param options Options including grossAmount flag
    * @returns Promise resolving to transaction hash
    */
@@ -153,6 +112,7 @@ export class MNEEFireblocksSDK {
     recipient: string,
     amount: number,
     walletObject: WalletObject,
+    utxos: MNEEUtxo[],
     options: TransferOptions = {}
   ): Promise<TransactionHashResponse> {
     try {
@@ -172,20 +132,20 @@ export class MNEEFireblocksSDK {
         throw new Error("Please enter a valid amount greater than 0");
       }
 
-      // Get sender address
-      const senderAddress = walletObject.ordAddress;
+      // Use all passed UTXOs (may be from multiple addresses in the vault)
+      this.logger.info(
+        `Using ${utxos.length} UTXOs from vault (may span multiple addresses)`
+      );
 
-      // Fetch UTXOs to determine total tokens available
-      this.logger.info("Fetching MNEE UTXOs");
-      const utxos = await this.cosignerService.fetchUtxos([senderAddress]);
-
-      // Calculate total available tokens
+      // Calculate total available tokens from all UTXOs
       const totalAvailableTokens = utxos.reduce(
         (sum, utxo) => sum + utxo.data.bsv21.amt,
         0
       );
       this.logger.info(
-        `Total available tokens: ${formatTokenAmount(totalAvailableTokens)}`
+        `Total available tokens: ${this.mneeInstance.fromAtomicAmount(
+          totalAvailableTokens
+        )}`
       );
 
       // Determine if this is an empty-wallet transaction
@@ -205,7 +165,7 @@ export class MNEEFireblocksSDK {
         this.logger.error("Fee ranges inadequate");
         throw new Error("Fee ranges inadequate");
       }
-      this.logger.info(`Fee: ${formatTokenAmount(fee)}`);
+      this.logger.info(`Fee: ${this.mneeInstance.fromAtomicAmount(fee)}`);
 
       // Calculate token amounts based on gross/net flag
       let tokenSatAmt: number;
@@ -214,26 +174,28 @@ export class MNEEFireblocksSDK {
         // Gross amount - fee comes from the transferred amount
         tokenSatAmt = amount - fee;
         this.logger.info(
-          `Gross transfer: ${formatTokenAmount(
+          `Gross transfer: ${this.mneeInstance.fromAtomicAmount(
             amount
-          )} total with ${formatTokenAmount(
+          )} total with ${this.mneeInstance.fromAtomicAmount(
             fee
-          )} fee, recipient gets ${formatTokenAmount(tokenSatAmt)}`
+          )} fee, recipient gets ${this.mneeInstance.fromAtomicAmount(
+            tokenSatAmt
+          )}`
         );
 
         // Make sure the amount after fee is still positive
         if (tokenSatAmt <= 0) {
           this.logger.error(
-            `Amount after fee (${formatTokenAmount(
+            `Amount after fee (${this.mneeInstance.fromAtomicAmount(
               tokenSatAmt
-            )}) is too small. Minimum transfer amount is ${formatTokenAmount(
+            )}) is too small. Minimum transfer amount is ${this.mneeInstance.fromAtomicAmount(
               fee + 1
             )}`
           );
           throw new Error(
-            `Amount after fee (${formatTokenAmount(
+            `Amount after fee (${this.mneeInstance.fromAtomicAmount(
               tokenSatAmt
-            )}) is too small. Minimum transfer amount is ${formatTokenAmount(
+            )}) is too small. Minimum transfer amount is ${this.mneeInstance.fromAtomicAmount(
               fee + 1
             )}`
           );
@@ -242,9 +204,11 @@ export class MNEEFireblocksSDK {
         // Net amount - recipient gets the full amount, sender pays fee separately
         tokenSatAmt = amount;
         this.logger.info(
-          `Net transfer: ${formatTokenAmount(
+          `Net transfer: ${this.mneeInstance.fromAtomicAmount(
             tokenSatAmt
-          )} to recipient, ${formatTokenAmount(fee)} fee, ${formatTokenAmount(
+          )} to recipient, ${this.mneeInstance.fromAtomicAmount(
+            fee
+          )} fee, ${this.mneeInstance.fromAtomicAmount(
             tokenSatAmt + fee
           )} total`
         );
@@ -253,139 +217,123 @@ export class MNEEFireblocksSDK {
       // Check if emptying wallet but not enough for fee
       if (isEmptyingWallet && totalAvailableTokens < fee) {
         this.logger.error(
-          `Insufficient tokens to cover fee when emptying wallet. Have ${formatTokenAmount(
+          `Insufficient tokens to cover fee when emptying wallet. Have ${this.mneeInstance.fromAtomicAmount(
             totalAvailableTokens
-          )}, need at least ${formatTokenAmount(fee)}`
+          )}, need at least ${this.mneeInstance.fromAtomicAmount(fee)}`
         );
         throw new Error(
-          `Insufficient tokens to cover fee when emptying wallet. Have ${formatTokenAmount(
+          `Insufficient tokens to cover fee when emptying wallet. Have ${this.mneeInstance.fromAtomicAmount(
             totalAvailableTokens
-          )}, need at least ${formatTokenAmount(fee)}`
+          )}, need at least ${this.mneeInstance.fromAtomicAmount(fee)}`
         );
       }
 
       this.logger.info("Building the transaction");
 
-      // Build the transaction
-      const tx = new Transaction();
-      tx.version = 1;
-
       // Calculate amount needed for UTXOs
       const amountNeeded = useGrossAmount ? amount : tokenSatAmt + fee;
 
-      // Select UTXOs
-      const { selectedUtxos, signingAddresses, tokensIn } =
+      // Select UTXOs from all available UTXOs (may span multiple addresses)
+      const { selectedUtxos, signingAddresses } =
         this.transactionService.selectUtxos(utxos, amountNeeded);
 
-      // Add inputs to transaction
-      for (const [index, utxo] of selectedUtxos.entries()) {
-        this.logger.info(`Adding input #${index} from UTXO ${utxo.txid}:${utxo.vout}`);
-        const sourceTransaction = await this.cosignerService.fetchTransaction(
-          utxo.txid
-        );
-
-        tx.addInput({
-          sourceTXID: utxo.txid,
-          sourceOutputIndex: utxo.vout,
-          sourceTransaction,
-          unlockingScript: new UnlockingScript(),
-        });
-      }
-
-      // Add recipient output
-      this.logger.info("Creating recipient output");
-      const recipientDataB64 = this.transactionService.createInscriptionData(
-        this.tokenConfig.tokenId,
-        tokenSatAmt
+      this.logger.info(
+        `Selected ${selectedUtxos.length} UTXOs from ${
+          new Set(signingAddresses).size
+        } address(es)`
       );
 
-      tx.addOutput({
-        lockingScript: await this.applyInscription(
-          new CosignTemplate().lock(
-            recipient,
-            PublicKey.fromString(this.tokenConfig.approver)
-          ),
-          {
-            dataB64: recipientDataB64,
-            contentType: "application/bsv-20",
-          }
-        ),
-        satoshis: 1,
-      });
+      // Determine change address - prefer the first signing address
+      const changeAddress = signingAddresses[0];
 
-      // Add fee output
-      this.logger.info("Creating fee output");
-      const feeDataB64 = this.transactionService.createInscriptionData(
-        this.tokenConfig.tokenId,
-        fee
-      );
-
-      tx.addOutput({
-        lockingScript: await this.applyInscription(
-          new CosignTemplate().lock(
-            this.tokenConfig.feeAddress,
-            PublicKey.fromString(this.tokenConfig.approver)
-          ),
-          {
-            dataB64: feeDataB64,
-            contentType: "application/bsv-20",
-          }
-        ),
-        satoshis: 1,
-      });
-
-      // Add change output if needed
-      const changeTokenSatAmt = tokensIn - amountNeeded;
-      if (changeTokenSatAmt > 0) {
-        this.logger.info(`Adding change output with ${changeTokenSatAmt} tokens`);
-        const changeDataB64 = this.transactionService.createInscriptionData(
-          this.tokenConfig.tokenId,
-          changeTokenSatAmt
-        );
-
-        tx.addOutput({
-          lockingScript: await this.applyInscription(
-            new CosignTemplate().lock(
-              senderAddress,
-              PublicKey.fromString(this.tokenConfig.approver)
-            ),
+      // Build unsigned transaction using MNEE SDK
+      // The SDK automatically handles:
+      // - Fetching source transactions for inputs
+      // - Creating recipient output with inscription
+      // - Creating fee output to feeAddress (automatic fee calculation)
+      // - Creating change output if needed
+      this.logger.info("Building unsigned transaction with MNEE SDK");
+      const { transaction: tx, sigRequests: sdkSigRequests } =
+        await this.mneeInstance.buildUnsignedMneeTransaction({
+          inputs: selectedUtxos.map((utxo) => ({
+            txid: utxo.txid,
+            vout: utxo.vout,
+          })),
+          recipients: [
             {
-              dataB64: changeDataB64,
-              contentType: "application/bsv-20",
-            }
-          ),
-          satoshis: 1,
+              address: recipient,
+              amount: this.mneeInstance.fromAtomicAmount(tokenSatAmt), // SDK expects decimal MNEE, not atomic units
+            },
+          ],
+          changeAddress,
         });
-      }
+
+      this.logger.info(
+        `Addresses in vault map: ${Array.from(
+          walletObject.addressToBip44Map.entries()
+        )
+          .map(([addr, idx]) => `${addr}:${idx}`)
+          .join(", ")}`
+      );
+      this.logger.info(
+        `Transaction built with ${tx.inputs.length} inputs and ${tx.outputs.length} outputs`
+      );
 
       try {
-        // Prepare signature requests
-        // Extract bip44AddressIndex from walletObject, if present
-        const bip44AddressIndex = walletObject.bip44AddressIndex || 0;
-        // Create an array of BIP44 address indexes for each signing address
-        const bip44AddressIndexes = signingAddresses.map(() => bip44AddressIndex);
+        // Enrich SDK signature requests with BIP44 address indexes for Fireblocks signing
+        // The SDK doesn't populate the address field, so we need to get it from the selected UTXOs
+        // Each signature request corresponds to an input, and each input comes from a selected UTXO
+        const sigRequests = sdkSigRequests.map((req) => {
+          // Get the UTXO for this input by matching the input index
+          const utxo = selectedUtxos[req.inputIndex];
 
-        // Update the prepareSignatureRequests call
-        const sigRequests = this.transactionService.prepareSignatureRequests(
-          tx,
-          signingAddresses,
-          bip44AddressIndexes
+          if (!utxo) {
+            throw new Error(`No UTXO found for input index ${req.inputIndex}`);
+          }
+
+          // Get the address that owns this UTXO (the first owner in the multisig array)
+          const address = Array.isArray(utxo.owners) ? utxo.owners[0] : utxo.owners;
+
+          // Look up BIP44 index for this address from the map
+          const bip44AddressIndex = walletObject.addressToBip44Map.get(address);
+
+          if (bip44AddressIndex === undefined) {
+            throw new Error(
+              `Address ${address} for input ${req.inputIndex} not found in vault addresses. ` +
+              `Available addresses: ${Array.from(walletObject.addressToBip44Map.keys()).join(', ')}`
+            );
+          }
+
+          this.logger.debug(
+            `Input ${req.inputIndex}: address=${address}, BIP44=${bip44AddressIndex}`
+          );
+
+          return {
+            ...req,
+            address, // Normalize to string
+            bip44AddressIndex,
+            // Ensure all required fields are present
+            script: req.script || "",
+            sigHashType: req.sigHashType || 0x41 | 0x40 | 0x01, // SIGHASH_ALL | ANYONECANPAY | FORKID
+          };
+        });
+
+        this.logger.info(
+          `Mapped ${sigRequests.length} signature requests to their correct BIP44 indexes`
         );
 
-        // Convert transaction to hex for signing
-        const rawtx = tx.toHex();
-
         // Pass the actual token amount (in MNEE tokens, not satoshis) that the recipient will receive
-        const tokenAmountForNote = satoshisToTokens(tokenSatAmt);
+        const tokenAmountForNote =
+          this.mneeInstance.fromAtomicAmount(tokenSatAmt);
 
         // Get signatures from Fireblocks
         this.logger.info("Getting signatures from Fireblocks");
         const signatures = await this.transactionService.getSignatures(
-          rawtx,
+          tx,
           sigRequests,
           recipient,
-          walletObject.vaultAccountId,  // Pass the vault account ID
-          tokenAmountForNote 
+          walletObject.vaultAccountId, // Pass the vault account ID
+          tokenAmountForNote
         );
 
         if (!signatures || signatures.length === 0) {
@@ -393,24 +341,28 @@ export class MNEEFireblocksSDK {
           throw new Error("Failed to get signatures");
         }
 
-        // Apply signatures to transaction
-        this.transactionService.applySignatures(tx, signatures);
+        // Convert signatures to SDK format (add sigHashType field)
+        const signatureResponses = signatures.map((sig) => ({
+          ...sig,
+          sigHashType:
+            sigRequests.find((req) => req.inputIndex === sig.inputIndex)
+              ?.sigHashType || 0x41 | 0x40 | 0x01,
+        }));
 
-        // Convert signed transaction to base64
+        // Apply signatures to transaction using MNEE SDK
+        const signedTx = this.mneeInstance.applySignatures(
+          tx,
+          signatureResponses
+        );
+
         this.logger.info("Submitting signed transaction");
-        const rawTxBase64 = Utils.toBase64(tx.toBinary());
 
         // Submit transaction to cosigner
         const response = await this.cosignerService.submitTransaction(
-          rawTxBase64
+          signedTx.toHex()
         );
 
-        // Parse transaction hash from response
-        const hexTransaction = Buffer.from(response.rawtx, "base64").toString(
-          "hex"
-        );
-        const txObj = Transaction.fromHex(hexTransaction);
-        const transactionHash = Buffer.from(txObj.id()).toString("hex");
+        const transactionHash = Transaction.fromHex(response.rawHex).id("hex");
 
         this.logger.info(`Transaction successful. Hash: ${transactionHash}`);
 
@@ -478,143 +430,63 @@ export class MNEEFireblocksSDK {
         addressToIndexMap.set(item.address, item.bip44AddressIndex);
       });
 
-      // Fetch UTXOs for all addresses in the vault
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
-
-      // Calculate total available tokens across all addresses
-      const totalAvailableTokens = utxos.reduce((sum, utxo) => {
-        if (utxo.data?.bsv21?.amt) {
-          return sum + utxo.data.bsv21.amt;
-        }
-        return sum;
-      }, 0);
-
-      // If no amount is specified, use the total available balance (full withdrawal)
-      const isFullBalanceWithdrawal = amount === undefined;
+      // Determine amount to transfer first to optimize UTXO fetching
       let satoshiAmount: number;
+      let utxos: MNEEUtxo[];
 
-      if (isFullBalanceWithdrawal) {
-        // Convert from satoshis to token denomination for logging
+      if (amount === undefined) {
+        // Full balance withdrawal - fetch all UTXOs
         this.logger.info(
-          `Full balance withdrawal requested. Available: ${formatTokenAmount(
+          "Full balance withdrawal requested - fetching all UTXOs"
+        );
+        utxos = await this.cosignerService.fetchUtxos(addresses);
+
+        const totalAvailableTokens = utxos.reduce(
+          (sum, utxo) => sum + (utxo.data?.bsv21?.amt || 0),
+          0
+        );
+
+        this.logger.info(
+          `Fetched ${
+            utxos.length
+          } UTXOs totaling ${this.mneeInstance.fromAtomicAmount(
             totalAvailableTokens
-          )}`
+          )} MNEE`
         );
 
-        // When sending full balance, we need to make sure we have enough for fees
-        if (!this.tokenConfig) {
-          this.tokenConfig = await this.cosignerService.fetchConfig();
-        }
-
-        // Find the appropriate fee tier for the total balance
-        const fee = this.tokenConfig.fees.find(
-          (fee) =>
-            totalAvailableTokens >= fee.min && totalAvailableTokens <= fee.max
-        )?.fee;
-
-        if (fee === undefined) {
-          this.logger.error("Fee ranges inadequate for total balance");
-          throw new Error("Fee ranges inadequate for total balance");
-        }
-
-        // Verify there's enough balance to cover at least the fee
-        if (totalAvailableTokens <= fee) {
-          this.logger.error(
-            `Insufficient balance to cover fee. Have ${formatTokenAmount(
-              totalAvailableTokens
-            )}, ` + `need at least ${formatTokenAmount(fee)} for fee`
-          );
-          throw new Error(
-            `Insufficient balance to cover fee. Have ${formatTokenAmount(
-              totalAvailableTokens
-            )}, ` + `need at least ${formatTokenAmount(fee)} for fee`
-          );
-        }
-
-        // Use the total available tokens as the amount
         satoshiAmount = totalAvailableTokens;
-
-        // Force the gross amount flag to true for full balance withdrawals
-        options.grossAmount = true;
-
-        this.logger.info(
-          `Full balance withdrawal: ${formatTokenAmount(
-            satoshiAmount
-          )} (gross amount: true)`
-        );
+        options.grossAmount = true; // Fee comes from the balance
       } else {
-        // Regular specified amount transfer
-        // Convert from token denomination to satoshis for internal use
-        satoshiAmount = tokensToSatoshis(amount);
+        // Specified amount transfer - only fetch enough UTXOs
+        satoshiAmount = this.mneeInstance.toAtomicAmount(amount);
         this.logger.info(
-          `Preparing to transfer ${formatTokenAmount(
+          `Transfer ${this.mneeInstance.fromAtomicAmount(
             satoshiAmount
-          )} from vault ${sourceVaultAccountId} to ${recipientAddress}`
+          )} MNEE requested - fetching optimized UTXOs`
         );
 
-        // Check if we have enough tokens in the vault (considering fees)
-        if (!this.tokenConfig) {
-          this.tokenConfig = await this.cosignerService.fetchConfig();
-        }
+        utxos = await this.cosignerService.fetchEnoughUtxos(
+          addresses,
+          satoshiAmount
+        );
 
-        const fee = this.tokenConfig.fees.find(
-          (fee) => satoshiAmount >= fee.min && satoshiAmount <= fee.max
-        )?.fee;
-
-        if (fee === undefined) {
-          this.logger.error("Fee ranges inadequate");
-          throw new Error("Fee ranges inadequate");
-        }
-
-        const totalRequired = options.grossAmount
-          ? satoshiAmount
-          : satoshiAmount + fee;
-
-        if (totalAvailableTokens < totalRequired) {
-          this.logger.error(
-            `Insufficient balance in vault ${sourceVaultAccountId}. ` +
-              `Required: ${formatTokenAmount(totalRequired)}, ` +
-              `Available: ${formatTokenAmount(totalAvailableTokens)}`
-          );
-          throw new Error(
-            `Insufficient balance in vault ${sourceVaultAccountId}. ` +
-              `Required: ${formatTokenAmount(totalRequired)}, ` +
-              `Available: ${formatTokenAmount(totalAvailableTokens)}`
-          );
-        }
+        this.logger.info(
+          `Optimized fetch: collected ${utxos.length} UTXOs (vs potentially all UTXOs)`
+        );
       }
 
-      // Find an appropriate address with UTXOs to use
-      // Starting with addresses that have UTXOs (active addresses)
-      const addressesWithUtxos = new Set(utxos.map((utxo) => utxo.owners[0]));
-
-      // If we found addresses with UTXOs, use the first one
-      // Otherwise, use the first address in the vault (which might be empty)
-      const selectedAddress =
-        addressesWithUtxos.size > 0
-          ? Array.from(addressesWithUtxos)[0]
-          : addresses[0];
-
-      // Get the BIP44 address index for the selected address
-      const selectedBip44AddressIndex =
-        addressToIndexMap.get(selectedAddress) || 0;
-
-      this.logger.info(
-        `Selected source address: ${selectedAddress} (BIP44 address index: ${selectedBip44AddressIndex})`
-      );
-
-      // Create wallet object with selected address and its BIP44 address index
+      // Create wallet object with ALL addresses and their BIP44 indexes for multi-address support
       const walletObject: WalletObject = {
-        ordAddress: selectedAddress,
         vaultAccountId: sourceVaultAccountId,
-        bip44AddressIndex: selectedBip44AddressIndex,
+        addressToBip44Map: addressToIndexMap,
       };
 
-      // Use the existing transferTokens method with our wallet object and the satoshi amount
+      // Use the existing transferTokens method with our wallet object, UTXOs, and the satoshi amount
       return await this.transferTokens(
         recipientAddress,
         satoshiAmount,
         walletObject,
+        utxos,
         options
       );
     } catch (error) {
@@ -637,24 +509,22 @@ export class MNEEFireblocksSDK {
 
       this.logger.info(`Calculating balance for ${addresses.length} addresses`);
 
-      // Fetch UTXOs for the provided addresses
-      const utxos = await this.cosignerService.fetchUtxos(addresses);
+      // Fetch balances using v2/balance endpoint
+      const balances = await this.cosignerService.fetchBalance(addresses);
 
       // Sum up the token amounts
-      const totalAvailableTokens = utxos.reduce((sum, utxo) => {
-        // Make sure bsv21 data exists before trying to access amt
-        if (utxo.data?.bsv21?.amt) {
-          return sum + utxo.data.bsv21.amt;
-        }
-        return sum;
+      const totalAvailableTokens = balances.reduce((sum, balance) => {
+        return sum + balance.amount;
       }, 0);
 
       this.logger.info(
-        `Total balance: ${satoshisToTokens(totalAvailableTokens)} MNEE tokens`
+        `Total balance: ${this.mneeInstance.fromAtomicAmount(
+          totalAvailableTokens
+        )} MNEE tokens`
       );
 
       // Convert to token denomination for return value
-      return satoshisToTokens(totalAvailableTokens);
+      return this.mneeInstance.fromAtomicAmount(totalAvailableTokens);
     } catch (error) {
       this.logger.error("Error calculating balance:", error);
       throw error;
@@ -676,7 +546,9 @@ export class MNEEFireblocksSDK {
       this.logger.info(`Getting balance for vault account ${vaultAccountId}`);
 
       // Get all BSV addresses associated with this vault account (updated)
-      const addresses = await this.fireblocksService.getVaultAddresses(vaultAccountId);
+      const addresses = await this.fireblocksService.getVaultAddresses(
+        vaultAccountId
+      );
 
       if (!addresses || addresses.length === 0) {
         this.logger.info("No addresses found for vault account");
@@ -684,6 +556,7 @@ export class MNEEFireblocksSDK {
       }
 
       this.logger.info(`Found ${addresses.length} addresses in vault account`);
+      this.logger.info(`Addresses: ${addresses.join("\n")}`);
 
       // Use the calculateBalance method to get the total balance for these addresses
       return await this.calculateBalance(addresses);

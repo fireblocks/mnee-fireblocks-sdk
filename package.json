@@ -2,7 +2,16 @@
   "name": "mnee-fireblocks-sdk",
   "version": "1.0.0",
   "description": "MNEE token operations using Fireblocks",
-  "main": "main.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watchAll",
@@ -14,7 +23,7 @@
   "author": "Slava Serebrianniy",
   "license": "ISC",
   "dependencies": {
-    "@bsv/sdk": "^1.4.18",
+    "@bsv/sdk": "^1.9.4",
     "@fireblocks/ts-sdk": "^10.0.1",
     "axios": "^1.8.4",
     "cors": "^2.8.5",
@@ -23,6 +32,7 @@
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
     "js-1sat-ord": "^0.1.80",
+    "mnee": "^3.1.0",
     "ts-node": "^10.9.2"
   },
   "devDependencies": {
