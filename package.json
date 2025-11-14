@@ -32,6 +32,7 @@
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
     "js-1sat-ord": "^0.1.80",
+    "mnee": "^3.1.0",
     "ts-node": "^10.9.2"
   },
   "devDependencies": {

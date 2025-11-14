@@ -1,6 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
-import { Transaction, Utils } from "@bsv/sdk";
-import { MNEEConfig, TicketResponse, TransactionForAddress, UTXO } from "../config/types.js";
+import Mnee, { MNEEBalance, TransferStatus, MNEEConfig, MNEEUtxo, MneeSync } from "mnee";
 import { Logger } from "../utils/logger.js";
 import "dotenv/config.js";
 
@@ -13,6 +12,7 @@ export class CosignerService {
   private config: MNEEConfig | null = null;
   private authToken: string;
   private logger: Logger;
+  public mnee: Mnee;
 
   /**
    * Initialize the cosigner service
@@ -41,7 +41,16 @@ export class CosignerService {
       },
     });
 
-    this.logger.debug(`CosignerService initialized with endpoint: ${endpoint}`);
+    // Initialize @mnee/ts-sdk
+    const environment = endpoint.includes("sandbox") ? "sandbox" : "production";
+    this.mnee = new Mnee({
+      environment,
+      apiKey: this.authToken,
+    });
+
+    this.logger.debug(
+      `CosignerService initialized with endpoint: ${endpoint}, environment: ${environment}`
+    );
   }
 
   /**
@@ -56,10 +65,8 @@ export class CosignerService {
       }
 
       this.logger.info("Fetching MNEE configuration");
-      const response = await this.axiosInstance.get(
-        `${this.endpoint}/v1/config`
-      );
-      this.config = response.data;
+      const response = await this.mnee.config();
+      this.config = response;
       this.logger.debug("MNEE configuration fetched successfully");
       return this.config;
     } catch (error) {
@@ -69,63 +76,129 @@ export class CosignerService {
   }
 
   /**
-   * Fetch UTXOs for given addresses
+   * Fetch all UTXOs for given addresses using @mnee/ts-sdk
    * @param addresses BSV addresses to get UTXOs for
-   * @returns Promise resolving to array of UTXOs
+   * @returns Promise resolving to array of all UTXOs
    */
-  async fetchUtxos(addresses: string[]): Promise<UTXO[]> {
+  async fetchUtxos(addresses: string[]): Promise<MNEEUtxo[]> {
     try {
-      const response = await this.axiosInstance.post(
-        `${this.endpoint}/v2/utxos`,
-        addresses
-      );
-      return response.data;
+      const rateLimitPerSecond = 10;
+      const delay = 1000 / rateLimitPerSecond;
+      const allUtxos: MNEEUtxo[] = [];
+      for (const address of addresses) {
+        const utxos = await this.mnee.getAllUtxos(address);
+        utxos.forEach(utxo => allUtxos.push(utxo));
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      this.logger.debug(`Fetching all UTXOs for ${addresses.length} addresses`);
+
+      return allUtxos;
     } catch (error) {
-      console.error("Error fetching UTXOs:", error);
+      this.logger.error("Error fetching UTXOs:", error);
       throw error;
     }
   }
 
   /**
-   * Fetch transaction by transaction ID
-   * @param txid Transaction ID
-   * @returns Promise resolving to Transaction object
+   * Fetch enough UTXOs to cover a specific amount across multiple addresses
+   * Optimized to minimize API calls by using early exit strategy
+   * @param addresses BSV addresses to get UTXOs from
+   * @param requiredAmount Required token amount in atomic units (satoshis)
+   * @returns Promise resolving to array of enough UTXOs
    */
-  async fetchTransaction(txid: string): Promise<Transaction> {
+  async fetchEnoughUtxos(
+    addresses: string[],
+    requiredAmount: number
+  ): Promise<MNEEUtxo[]> {
     try {
-      const response = await this.axiosInstance.get(
-        `${this.endpoint}/v1/tx/${txid}`
+      const rateLimitPerSecond = 10;
+      const delay = 1000 / rateLimitPerSecond;
+      const collectedUtxos: MNEEUtxo[] = [];
+      let totalCollected = 0;
+
+      this.logger.debug(
+        `Fetching enough UTXOs for ${addresses.length} addresses to cover ${requiredAmount} atomic units`
       );
-      if (!response.data || !response.data.rawtx) {
-        throw new Error("Failed to fetch transaction");
+
+      for (const address of addresses) {
+        const remainingNeeded = requiredAmount - totalCollected;
+        const utxos = await this.mnee.getEnoughUtxos(address, remainingNeeded);
+
+        utxos.forEach((utxo) => {
+          collectedUtxos.push(utxo);
+          totalCollected += utxo.data.bsv21.amt;
+        });
+
+        this.logger.debug(
+          `Address ${address}: +${utxos.length} UTXOs, total: ${totalCollected}/${requiredAmount}`
+        );
+
+        if (totalCollected >= requiredAmount) {
+          this.logger.info(
+            `Sufficient UTXOs found after ${addresses.indexOf(address) + 1}/${addresses.length} addresses`
+          );
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
-      return Transaction.fromBinary(
-        Utils.toArray(response.data.rawtx, "base64")
+      if (totalCollected < requiredAmount) {
+        this.logger.error(
+          `Insufficient tokens across all addresses: have ${totalCollected}, need ${requiredAmount}`
+        );
+        throw new Error(
+          `Insufficient tokens: have ${this.mnee.fromAtomicAmount(totalCollected)}, ` +
+          `need ${this.mnee.fromAtomicAmount(requiredAmount)} MNEE`
+        );
+      }
+
+      this.logger.info(
+        `Collected ${collectedUtxos.length} UTXOs totaling ${totalCollected} atomic units`
       );
+      return collectedUtxos;
     } catch (error) {
-      console.error(`Error fetching transaction ${txid}:`, error);
+      this.logger.error("Error fetching enough UTXOs:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch balances for given addresses using @mnee/ts-sdk batch operation
+   * @param addresses BSV addresses to get balances for
+   * @returns Promise resolving to array of balance data
+   */
+  async fetchBalance(addresses: string[]): Promise<MNEEBalance[]> {
+    try {
+      this.logger.debug(`Fetching balances for ${addresses.length} addresses`);
+      const balances = await this.mnee.balances(addresses);
+      const fundedBalances = balances.filter((balance) => balance.amount > 0);
+
+      this.logger.debug(
+        `Fetched balances for ${fundedBalances.length} addresses with balance`
+      );
+      return fundedBalances;
+    } catch (error) {
+      this.logger.error("Error fetching balances:", error);
       throw error;
     }
   }
 
   /**
    * Submit a signed transaction
-   * @param rawTxBase64 Base64 encoded transaction
+   * @param rawHex Base64 encoded transaction
    * @returns Promise resolving to transaction response
    */
-  async submitTransaction(rawTxBase64: string): Promise<{ rawHex: string }> {
+  async submitTransaction(rawHex: string): Promise<{ rawHex: string }> {
     try {
-      const response = await this.axiosInstance.post<string>(
-        `${this.endpoint}/v2/transfer`,
-        { rawtx: rawTxBase64 }
+      const response = await this.mnee.submitRawTx(rawHex);
+      const ticketId = response.ticketId;
+      const result = await this.waitForV2Completion(
+        ticketId,
+        Date.now(),
+        25000
       );
-      if (!response.data) {
-        throw new Error("Failed to submit transaction");
-      }
-      const ticketId = response.data;
-      const result = await this.waitForV2Completion(ticketId, Date.now(), 25000);
-      return {rawHex: result.tx_hex};
+      return { rawHex: result.tx_hex };
     } catch (error) {
       console.error("Error submitting transaction:", error);
 
@@ -168,21 +241,18 @@ export class CosignerService {
     ticketId: string,
     startTime: number,
     maxWaitTime: number
-  ): Promise<TicketResponse> {
+  ): Promise<TransferStatus> {
     const checkInterval = 1000; // Check every second
 
     while (Date.now() - startTime < maxWaitTime) {
       try {
-        const response = await this.axiosInstance.get<TicketResponse>(
-          `${this.endpoint}/v2/ticket?ticketID=${ticketId}`
-        );
-        const status = response.data.status;  
-        if (status === "SUCCESS" || status === "MINED") {
-          return response.data;
+        const response = await this.mnee.getTxStatus(ticketId);
+        if (response.status === "SUCCESS" || response.status === "MINED") {
+          return response;
         }
 
-        if (status === "FAILED") {
-          return response.data;
+        if (response.status === "FAILED") {
+          return response;
         }
       } catch (error) {
         this.logger.warn(`Error checking status for ${ticketId}:`, error);
@@ -191,15 +261,17 @@ export class CosignerService {
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
     }
 
-    this.logger.error(`Transaction ${ticketId} timed out after ${maxWaitTime}ms`);
+    this.logger.error(
+      `Transaction ${ticketId} timed out after ${maxWaitTime}ms`
+    );
     throw new Error(`Transaction ${ticketId} timed out after ${maxWaitTime}ms`);
   }
 
   async getTransactionsForAddresses(
     addresses: string[]
-  ): Promise<TransactionForAddress[]> {
+  ): Promise<MneeSync[]> {
     try {
-      const response = await this.axiosInstance.post(
+      const response = await this.axiosInstance.post<MneeSync[]>(
         `${this.endpoint}/v1/sync`,
         addresses
       );
