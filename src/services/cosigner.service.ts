@@ -164,7 +164,7 @@ export class CosignerService {
   }
 
   /**
-   * Fetch balances for given addresses using @mnee/ts-sdk batch operation
+   * Fetch balances for given addresses using mnee sdk
    * @param addresses BSV addresses to get balances for
    * @returns Promise resolving to array of balance data
    */
