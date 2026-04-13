@@ -118,55 +118,89 @@ export class CosignerService {
     requiredAmount: number
   ): Promise<MNEEUtxo[]> {
     try {
-      const rateLimitPerSecond = 10;
-      const delay = 1000 / rateLimitPerSecond;
-      const collectedUtxos: MNEEUtxo[] = [];
-      let totalCollected = 0;
+      const uniqueAddresses = [...new Set(addresses.filter(Boolean))];
 
       this.logger.debug(
-        `Fetching enough UTXOs for ${addresses.length} addresses to cover ${requiredAmount} atomic units`
+        `Fetching enough UTXOs across ${uniqueAddresses.length} addresses to cover ${requiredAmount} atomic units`
       );
 
-      for (const address of addresses) {
-        const remainingNeeded = requiredAmount - totalCollected;
-        const utxos = await this.mnee.getEnoughUtxos(address, remainingNeeded);
-
-        utxos.forEach((utxo) => {
-          collectedUtxos.push(utxo);
-          totalCollected += utxo.data.bsv21.amt;
-        });
-
-        this.logger.debug(
-          `Address ${address}: +${utxos.length} UTXOs, total: ${totalCollected}/${requiredAmount}`
-        );
-
-        if (totalCollected >= requiredAmount) {
-          this.logger.info(
-            `Sufficient UTXOs found after ${addresses.indexOf(address) + 1}/${
-              addresses.length
-            } addresses`
-          );
-          break;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, delay));
+      if (uniqueAddresses.length === 0) {
+        throw new Error("No valid addresses provided");
       }
 
-      if (totalCollected < requiredAmount) {
-        this.logger.error(
-          `Insufficient tokens across all addresses: have ${totalCollected}, need ${requiredAmount}`
+      const config = this.config || (await this.fetchConfig());
+      if (!config) {
+        throw new Error("Config not fetched");
+      }
+
+      const feeConfig = config.fees.find(
+        (fee) => requiredAmount >= fee.min && requiredAmount <= fee.max
+      );
+      if (!feeConfig) {
+        throw new Error("Fee not found");
+      }
+
+      const feeAmount = feeConfig.fee;
+
+      const totalRequiredAmount = requiredAmount + feeAmount;
+
+      const balances = await this.fetchBalance(uniqueAddresses);
+      const combinedBalance = balances.reduce(
+        (sum, balance) => sum + balance.amount,
+        0
+      );
+
+      if (combinedBalance < totalRequiredAmount) {
+        const maxTransferAmount = this.mnee.fromAtomicAmount(
+          Math.max(combinedBalance - feeAmount, 0)
         );
         throw new Error(
-          `Insufficient tokens: have ${this.mnee.fromAtomicAmount(
-            totalCollected
-          )}, ` + `need ${this.mnee.fromAtomicAmount(requiredAmount)} MNEE`
+          `Insufficient MNEE balance. Max transfer amount: ${maxTransferAmount}`
         );
+      }
+
+      let page = 1;
+      const size = 100;
+      const collectedUtxos: MNEEUtxo[] = [];
+      let runningTotal = 0;
+
+      while (runningTotal < totalRequiredAmount) {
+        const pageUtxos = await this.mnee.getUtxos(uniqueAddresses, page, size);
+
+        if (pageUtxos.length === 0) {
+          const maxTransferAmount = this.mnee.fromAtomicAmount(
+            Math.max(runningTotal - feeAmount, 0)
+          );
+          throw new Error(
+            `Not enough UTXOs to cover required amount. Collected ${runningTotal} atomic units. Max transfer amount: ${maxTransferAmount}`
+          );
+        }
+
+        collectedUtxos.push(...pageUtxos);
+        runningTotal += pageUtxos.reduce(
+          (sum, utxo) => sum + utxo.data.bsv21.amt,
+          0
+        );
+        page++;
+      }
+
+      collectedUtxos.sort((a, b) => b.data.bsv21.amt - a.data.bsv21.amt);
+      const selectedUtxos: MNEEUtxo[] = [];
+      let selectedTotal = 0;
+
+      for (const utxo of collectedUtxos) {
+        selectedUtxos.push(utxo);
+        selectedTotal += utxo.data.bsv21.amt;
+
+        if (selectedTotal >= totalRequiredAmount) {
+          break;
+        }
       }
 
       this.logger.info(
-        `Collected ${collectedUtxos.length} UTXOs totaling ${totalCollected} atomic units`
+        `Collected ${selectedUtxos.length} UTXOs totaling ${selectedTotal} atomic units`
       );
-      return collectedUtxos;
+      return selectedUtxos;
     } catch (error) {
       this.logger.error("Error fetching enough UTXOs:", error);
       throw error;
