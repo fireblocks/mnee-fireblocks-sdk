@@ -9,6 +9,7 @@ import Mnee, {
 import { Logger } from "../utils/logger.js";
 import "dotenv/config.js";
 import { Utils } from "@bsv/sdk";
+import { TransferOptions } from "../config/types.js";
 
 /**
  * Service for interacting with MNEE cosigner
@@ -233,10 +234,13 @@ export class CosignerService {
    * @param rawHex Base64 encoded transaction
    * @returns Promise resolving to transaction response
    */
-  async submitTransaction(rawHex: string): Promise<{ rawHex: string }> {
+  async submitTransaction(rawHex: string, options: TransferOptions = {}): Promise<{ rawHex: string } | { ticketId: string }> {
     try {
       const response = await this.mnee.submitRawTx(rawHex);
       const ticketId = response.ticketId;
+      if (options.returnMneeTxId) {
+        return { ticketId: ticketId };
+      }
       this.logger.info(`Ticket ID: ${ticketId}`);
       const result = await this.waitForV2Completion(
         ticketId,

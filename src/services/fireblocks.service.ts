@@ -11,6 +11,7 @@ import {
 import {
   FireblocksSignature,
   HashWithIndex,
+  TransferOptions,
 } from "../config/types.js"
 import { doubleHash } from "../utils/crypto.utils.js";
 import { Logger } from "../utils/logger.js";
@@ -44,7 +45,8 @@ export class FireblocksService {
     sigHashesWithIndex: Array<HashWithIndex & { bip44AddressIndex?: number }>,
     amount: number,
     destination: string,
-    vaultAccountId: string
+    vaultAccountId: string,
+    options: TransferOptions = {}
   ): Promise<Array<{ inputIndex: number; signature: FireblocksSignature }>> {
     if (!vaultAccountId) {
       throw new Error("Vault account ID is required for signing");
@@ -91,7 +93,8 @@ export class FireblocksService {
             type: TransferPeerPathType.VaultAccount,
             id: vaultAccountId,
           },
-          note: formattedNote,
+          note: options.note || formattedNote,
+          externalTxId: options.externalTxId,
           extraParameters: {
             rawMessageData: {
               messages: messages,

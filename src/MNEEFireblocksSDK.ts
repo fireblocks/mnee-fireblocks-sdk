@@ -3,6 +3,7 @@ import { Transaction } from "@bsv/sdk";
 import { BasePath, Fireblocks } from "@fireblocks/ts-sdk";
 import {
   TransactionHashResponse,
+  TransactionIdResponse,
   TransferOptions,
   WalletObject,
 } from "./config/types.js";
@@ -106,7 +107,7 @@ export class MNEEFireblocksSDK {
    * @param walletObject Wallet object with vaultAccountId and addressToBip44Map
    * @param utxos UTXOs to use for the transfer
    * @param options Options including grossAmount flag
-   * @returns Promise resolving to transaction hash
+   * @returns Promise resolving to transaction hash or transaction id
    */
   private async transferTokens(
     recipient: string,
@@ -114,7 +115,7 @@ export class MNEEFireblocksSDK {
     walletObject: WalletObject,
     utxos: MNEEUtxo[],
     options: TransferOptions = {}
-  ): Promise<TransactionHashResponse> {
+  ): Promise<TransactionHashResponse | TransactionIdResponse> {
     try {
       // Make sure walletObject contains a vaultAccountId
       if (!walletObject.vaultAccountId) {
@@ -333,7 +334,8 @@ export class MNEEFireblocksSDK {
           sigRequests,
           recipient,
           walletObject.vaultAccountId, // Pass the vault account ID
-          tokenAmountForNote
+          tokenAmountForNote,
+          options
         );
 
         if (!signatures || signatures.length === 0) {
@@ -359,8 +361,14 @@ export class MNEEFireblocksSDK {
 
         // Submit transaction to cosigner
         const response = await this.cosignerService.submitTransaction(
-          signedTx.toHex()
+          signedTx.toHex(),
+          options
         );
+
+        if ("ticketId" in response) {
+          this.logger.info(`Transaction submitted with MNEE ticket ID: ${response.ticketId}`);
+          return { transactionId: response.ticketId }; // Return ticket ID as transaction id if requested
+        }
 
         const transactionHash = Transaction.fromHex(response.rawHex).id("hex");
 
@@ -383,14 +391,14 @@ export class MNEEFireblocksSDK {
    * @param recipientAddress Recipient address
    * @param amount Amount to transfer in MNEE tokens (e.g., 0.497 for 0.497 MNEE), or undefined to send full balance
    * @param options Options including grossAmount flag (note: grossAmount is automatically set to true when sending full balance)
-   * @returns Promise resolving to transaction hash
+   * @returns Promise resolving to transaction hash or transaction id
    */
   async transferTokensFromVault(
     sourceVaultAccountId: string,
     recipientAddress: string,
     amount?: number,
     options: TransferOptions = {}
-  ): Promise<TransactionHashResponse> {
+  ): Promise<TransactionHashResponse | TransactionIdResponse> {
     // This method already takes sourceVaultAccountId as a parameter, so we just need to validate it
     if (!sourceVaultAccountId) {
       this.logger.error("Source vault account ID is required");

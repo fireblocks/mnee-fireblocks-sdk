@@ -17,7 +17,9 @@
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watchAll",
     "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
     "start": "NODE_OPTIONS=\"--experimental-specifier-resolution=node --no-warnings\" node --loader ts-node/esm main.ts",
-    "build": "tsc"
+    "clean": "rm -rf dist",
+    "build": "tsc",
+    "pack": "npm run clean && npm run build && npm pack"
   },
   "keywords": [],
   "author": "Slava Serebrianniy",

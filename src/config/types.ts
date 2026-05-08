@@ -36,6 +36,9 @@ export interface WalletObject {
  */
 export interface TransferOptions {
   grossAmount?: boolean;
+  externalTxId?: string;
+  note?: string;
+  returnMneeTxId?: boolean;
 }
 
 /**
@@ -43,6 +46,13 @@ export interface TransferOptions {
  */
 export interface TransactionHashResponse {
   transactionHash: string;
+}
+
+/**
+ * Interface for transaction id response
+ */
+export interface TransactionIdResponse {
+  transactionId: string;
 }
 
 /**
