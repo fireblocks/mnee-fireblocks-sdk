@@ -11,7 +11,7 @@ import { CosignerService } from "./services/cosigner.service.js";
 import { FireblocksService } from "./services/fireblocks.service.js";
 import { TransactionService } from "./services/transaction.service.js";
 import { Logger } from "./utils/logger.js";
-import Mnee, { MNEEConfig, MNEEUtxo } from "mnee";
+import Mnee, { MNEEConfig, MNEEUtxo } from "@mnee/ts-sdk";
 
 /**
  * MNEE Fireblocks SDK

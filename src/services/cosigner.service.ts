@@ -5,7 +5,7 @@ import Mnee, {
   MNEEConfig,
   MNEEUtxo,
   MneeSync,
-} from "mnee";
+} from "@mnee/ts-sdk";
 import { Logger } from "../utils/logger.js";
 import "dotenv/config.js";
 import { Utils } from "@bsv/sdk";

@@ -13,7 +13,7 @@ import {
 import { FireblocksService } from "./fireblocks.service.js";
 import { createDERSignature } from "../utils/crypto.utils.js";
 import { Logger } from "../utils/logger.js";
-import { MNEEUtxo } from "mnee";
+import { MNEEUtxo } from "@mnee/ts-sdk";
 
 /**
  * Service for handling BSV transaction operations
